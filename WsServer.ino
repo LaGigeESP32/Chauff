@@ -1,6 +1,45 @@
 
 #include "types.h"
 
+static int findClientPageSlot(uint32_t clientId) {
+  for (size_t i = 0; i < MAX_WS_CLIENTS; i++) {
+    if (clientPages[i].used && clientPages[i].id == clientId) {
+      return (int)i;
+    }
+  }
+  return -1;
+}
+
+static int findFreeClientPageSlot() {
+  for (size_t i = 0; i < MAX_WS_CLIENTS; i++) {
+    if (!clientPages[i].used) {
+      return (int)i;
+    }
+  }
+  return -1;
+}
+
+static void setClientPage(uint32_t clientId, PageWeb page) {
+  int slot = findClientPageSlot(clientId);
+  if (slot < 0) {
+    slot = findFreeClientPageSlot();
+  }
+  if (slot < 0) {
+    return;
+  }
+
+  clientPages[slot].id = clientId;
+  clientPages[slot].page = page;
+  clientPages[slot].used = true;
+}
+
+static void removeClientPage(uint32_t clientId) {
+  int slot = findClientPageSlot(clientId);
+  if (slot >= 0) {
+    clientPages[slot].used = false;
+  }
+}
+
 // ---------- Helpers ----------
 static PageWeb pageFromText(const char* s) {
   if (s == nullptr) return PAGE_UNKNOWN;
@@ -53,11 +92,7 @@ void onWebSocketEvent(AsyncWebSocket* server,
     case WS_EVT_DISCONNECT: {
       Serial.print("Page Web deconnectee, client #");
       Serial.println(client->id());
-
-      auto it = clientPages.find(client->id());
-      if (it != clientPages.end()) {
-        clientPages.erase(it);
-      }
+      removeClientPage(client->id());
       break;
     }
 
@@ -108,7 +143,7 @@ void handleWebSocketMessage(AsyncWebSocketClient* client,
   const char* pageWebEnCours = doc["pageWebEnCours"] | nullptr;
   if (pageWebEnCours != nullptr) {
     const PageWeb page = pageFromText(pageWebEnCours);
-    clientPages[client->id()] = page;
+    setClientPage(client->id(), page);
 
     IPAddress ip = client->remoteIP();
     Serial.printf("%u.%u.%u.%u : %s\n", ip[0], ip[1], ip[2], ip[3], pageToText(page));
@@ -137,23 +172,10 @@ void handleWebSocketMessage(AsyncWebSocketClient* client,
       Serial.println("RetourGestion");
       Serial.println(payload);
 
-      const int oldActiveRouteur = ActiveRouteur;
-      const int newActiveRouteur = doc["ActiveRouteur"] | ActiveRouteur;
-
-      if (oldActiveRouteur == 0 && newActiveRouteur == 1) {
+      const bool shouldReconnectRouteur = applyGestionConfigFromJson(doc);
+      if (shouldReconnectRouteur) {
         connectRouteurHard();
       }
-
-      Modesaison                 = doc["modeSaison"]                 | Modesaison;
-      modeSaisonAuto             = doc["modeSaisonAuto"]             | modeSaisonAuto;
-      ActiveRouteur              = newActiveRouteur;
-      ConsigneHiverMax           = doc["ConsigneHiverMax"]           | ConsigneHiverMax;
-      ConsigneHiverP4            = doc["ConsigneHiverP4"]            | ConsigneHiverP4;
-      ConsigneHiverP3            = doc["ConsigneHiverP3"]            | ConsigneHiverP3;
-      ConsigneHiverP2            = doc["ConsigneHiverP2"]            | ConsigneHiverP2;
-      Activemaintien             = doc["Activemaintien"]             | Activemaintien;
-      Tmaintien                  = doc["Tmaintien"]                  | Tmaintien;
-      Pmaintien                  = doc["Pmaintien"]                  | Pmaintien;
 
       // Réponse immédiate au client courant
       char reply[JSON_NOTIFY_GESTION_SIZE];
@@ -168,19 +190,21 @@ void handleWebSocketMessage(AsyncWebSocketClient* client,
 
 bool buildNotifyGestion(char* out, size_t outSize, bool force) {
   if (out == nullptr || outSize == 0) return false;
+  GestionConfig cfg;
+  getGestionConfigSnapshot(cfg);
 
   StaticJsonDocument<JSON_NOTIFY_GESTION_SIZE> doc;
 
-  doc["modeSaison"]               = Modesaison;
-  doc["modeSaisonAuto"]           = modeSaisonAuto;
-  doc["ActiveRouteur"]            = ActiveRouteur;
-  doc["ConsigneHiverMax"]         = ConsigneHiverMax;
-  doc["ConsigneHiverP4"]          = ConsigneHiverP4;
-  doc["ConsigneHiverP3"]          = ConsigneHiverP3;
-  doc["ConsigneHiverP2"]          = ConsigneHiverP2;
-  doc["Activemaintien"]           = Activemaintien;
-  doc["Tmaintien"]                = Tmaintien;
-  doc["Pmaintien"]                = Pmaintien;
+  doc["modeSaison"]               = cfg.Modesaison;
+  doc["modeSaisonAuto"]           = cfg.modeSaisonAuto;
+  doc["ActiveRouteur"]            = cfg.ActiveRouteur;
+  doc["ConsigneHiverMax"]         = cfg.ConsigneHiverMax;
+  doc["ConsigneHiverP4"]          = cfg.ConsigneHiverP4;
+  doc["ConsigneHiverP3"]          = cfg.ConsigneHiverP3;
+  doc["ConsigneHiverP2"]          = cfg.ConsigneHiverP2;
+  doc["Activemaintien"]           = cfg.Activemaintien;
+  doc["Tmaintien"]                = cfg.Tmaintien;
+  doc["Pmaintien"]                = cfg.Pmaintien;
   doc["SoftVersion"]              = SoftVersion;
 
   const size_t written = serializeJson(doc, out, outSize);
@@ -246,8 +270,12 @@ void Notify() {
   const bool gestionChanged = buildNotifyGestion(gestionJson, sizeof(gestionJson), false);
 
   for (const auto& clientPage : clientPages) {
-    const uint32_t clientId = clientPage.first;
-    const PageWeb page = clientPage.second;
+    if (!clientPage.used) {
+      continue;
+    }
+
+    const uint32_t clientId = clientPage.id;
+    const PageWeb page = clientPage.page;
 
     AsyncWebSocketClient* client = ws.client(clientId);
     if (client == nullptr) continue;

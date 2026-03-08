@@ -12,7 +12,7 @@
 #include <WebSocketsClient_Generic.h>
 #include <WiFiManagerESP32.h>
 #include <Adafruit_NeoPixel.h>
-#include <map>
+#include <soc/gpio_struct.h>
 #include "types.h"
 
 // =======================
@@ -87,6 +87,19 @@ struct SharedData {
 
 SharedData shared; // instance globale partagée
 
+struct GestionConfig {
+  bool Modesaison;
+  bool modeSaisonAuto;
+  bool ActiveRouteur;
+  uint8_t ConsigneHiverMax;
+  uint8_t ConsigneHiverP4;
+  uint8_t ConsigneHiverP3;
+  uint8_t ConsigneHiverP2;
+  bool Activemaintien;
+  uint8_t Tmaintien;
+  uint8_t Pmaintien;
+};
+
 // heure
   int day;
   int month;
@@ -135,13 +148,16 @@ WebSocketsClient webSocket;
 // =======================
 hw_timer_t *timer = nullptr;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
 
-static constexpr uint32_t HALF_CYCLE_US = 10000; // 50Hz => 10ms
-static constexpr uint32_t MIN_DELAY_US  = 200;
-static constexpr uint32_t PULSE_US      = 50;
-static constexpr uint32_t ZC_DEBOUNCE_US = 2000;
+static constexpr uint32_t TRIAC_HALF_CYCLE_US       = 10000; // 50Hz => 10ms
+static constexpr uint32_t TRIAC_DELAY_MIN_US         = 200;
+static constexpr uint32_t TRIAC_PULSE_US             = 50;
+static constexpr uint32_t TRIAC_ZC_DEBOUNCE_US       = 2000;
+static constexpr uint32_t TRIAC_DELAY_OFF_US         = TRIAC_HALF_CYCLE_US + 1U;
+static constexpr uint32_t TRIAC_DELAY_MAX_FIRE_US    = TRIAC_HALF_CYCLE_US - TRIAC_PULSE_US;
 
-volatile uint32_t triggerDelayUs = 20000; // >= HALF_CYCLE_US => OFF
+volatile uint32_t triggerDelayUs = TRIAC_DELAY_OFF_US; // >= HALF_CYCLE_US => OFF
 volatile bool triacEnabled = false;
 volatile uint16_t requestedPowerPermille = 0;
 volatile uint16_t appliedPowerPermille   = 0;
@@ -187,8 +203,14 @@ static uint8_t g_lastLedPower = 255;   // valeur impossible au démarrage
 // =======================
 // Page client
 // =======================
+struct ClientPageEntry {
+  uint32_t id;
+  PageWeb page;
+  bool used;
+};
 
-std::map<uint32_t, PageWeb> clientPages;
+static constexpr size_t MAX_WS_CLIENTS = 8;
+ClientPageEntry clientPages[MAX_WS_CLIENTS] = {};
 
 // ---------- Buffers cache notify ----------
 // ---------- Configuration ----------
@@ -196,10 +218,19 @@ static constexpr size_t WS_RX_BUFFER_SIZE         = 512;
 static constexpr size_t JSON_DOC_RX_SIZE          = 512;
 static constexpr size_t JSON_NOTIFY_GESTION_SIZE  = 512;
 static constexpr size_t JSON_NOTIFY_HOME_SIZE     = 512;
+static constexpr size_t ROUTEUR_RX_BUFFER_SIZE    = 256;
 
 static char g_notifyGestionLast[JSON_NOTIFY_GESTION_SIZE] = {0};
 static char g_notifyHomeLast[JSON_NOTIFY_HOME_SIZE] = {0};
 
+
+static inline void IRAM_ATTR triacGateOn() {
+  GPIO.out_w1ts = (1UL << TRIAC_PIN);
+}
+
+static inline void IRAM_ATTR triacGateOff() {
+  GPIO.out_w1tc = (1UL << TRIAC_PIN);
+}
 
 // =======================
 // TRIAC timer ISR
@@ -208,7 +239,7 @@ void IRAM_ATTR timerISR() {
   portENTER_CRITICAL_ISR(&timerMux);
 
   if (!triacEnabled) {
-    digitalWrite(TRIAC_PIN, LOW);
+    triacGateOff();
     phaseState = IDLE;
     timerAlarmDisable(timer);
     portEXIT_CRITICAL_ISR(&timerMux);
@@ -216,15 +247,15 @@ void IRAM_ATTR timerISR() {
   }
 
   if (phaseState == WAIT_FIRE) {
-    digitalWrite(TRIAC_PIN, HIGH);
+    triacGateOn();
     phaseState = WAIT_OFF;
 
     timerWrite(timer, 0);
-    timerAlarmWrite(timer, PULSE_US, false);
+    timerAlarmWrite(timer, TRIAC_PULSE_US, false);
     timerAlarmEnable(timer);
   }
   else if (phaseState == WAIT_OFF) {
-    digitalWrite(TRIAC_PIN, LOW);
+    triacGateOff();
     phaseState = IDLE;
     timerAlarmDisable(timer);
   }
@@ -239,14 +270,14 @@ void IRAM_ATTR zeroCrossISR() {
   uint32_t now = micros();
   uint32_t prevZc = lastZcMicros;
 
-  if (prevZc != 0 && (now - prevZc) < ZC_DEBOUNCE_US) {
+  if (prevZc != 0 && (now - prevZc) < TRIAC_ZC_DEBOUNCE_US) {
     return;
   }
 
   lastZcMicros = now;
 
   if (!triacEnabled) return;
-  if (triggerDelayUs >= HALF_CYCLE_US) return;
+  if (triggerDelayUs >= TRIAC_HALF_CYCLE_US) return;
 
   portENTER_CRITICAL_ISR(&timerMux);
   phaseState = WAIT_FIRE;
@@ -272,11 +303,11 @@ static inline float powerRatioFromAlpha(float alphaRad) {
 }
 
 static uint16_t powerPermilleFromDelayUs(uint32_t delayUs) {
-  if (delayUs >= HALF_CYCLE_US) {
+  if (delayUs >= TRIAC_HALF_CYCLE_US) {
     return 0;
   }
 
-  float alpha = ((float)delayUs * PI) / (float)HALF_CYCLE_US;
+  float alpha = ((float)delayUs * PI) / (float)TRIAC_HALF_CYCLE_US;
   float ratio = powerRatioFromAlpha(alpha);
 
   if (ratio <= 0.0f) {
@@ -292,29 +323,29 @@ static uint16_t powerPermilleFromDelayUs(uint32_t delayUs) {
 
 static uint32_t delayUsFromPowerPermille(uint16_t permille) {
   if (permille == 0) {
-    return HALF_CYCLE_US + 1U; // OFF logique
+    return TRIAC_DELAY_OFF_US; // OFF logique
   }
 
   if (permille >= 1000) {
-    return MIN_DELAY_US;
+    return TRIAC_DELAY_MIN_US;
   }
 
   const float target = (float)permille / 1000.0f;
 
   // Bornes d’angle correspondant aux limites matérielles
-  float alphaLo = ((float)MIN_DELAY_US * PI) / (float)HALF_CYCLE_US;
-  float alphaHi = (((float)HALF_CYCLE_US - 50.0f) * PI) / (float)HALF_CYCLE_US;
+  float alphaLo = ((float)TRIAC_DELAY_MIN_US * PI) / (float)TRIAC_HALF_CYCLE_US;
+  float alphaHi = ((float)TRIAC_DELAY_MAX_FIRE_US * PI) / (float)TRIAC_HALF_CYCLE_US;
 
   // Clamp si la demande dépasse ce que les bornes physiques permettent
   float pMax = powerRatioFromAlpha(alphaLo);
   float pMin = powerRatioFromAlpha(alphaHi);
 
   if (target >= pMax) {
-    return MIN_DELAY_US;
+    return TRIAC_DELAY_MIN_US;
   }
 
   if (target <= pMin) {
-    return HALF_CYCLE_US - 50U;
+    return TRIAC_DELAY_MAX_FIRE_US;
   }
 
   // Recherche dichotomique de l’angle donnant la bonne puissance
@@ -332,14 +363,14 @@ static uint32_t delayUsFromPowerPermille(uint16_t permille) {
   }
 
   float alpha = 0.5f * (alphaLo + alphaHi);
-  uint32_t delayUs = (uint32_t)((alpha * (float)HALF_CYCLE_US) / PI + 0.5f);
+  uint32_t delayUs = (uint32_t)((alpha * (float)TRIAC_HALF_CYCLE_US) / PI + 0.5f);
 
-  if (delayUs < MIN_DELAY_US) {
-    delayUs = MIN_DELAY_US;
+  if (delayUs < TRIAC_DELAY_MIN_US) {
+    delayUs = TRIAC_DELAY_MIN_US;
   }
 
-  if (delayUs > (HALF_CYCLE_US - 50U)) {
-    delayUs = HALF_CYCLE_US - 50U;
+  if (delayUs > TRIAC_DELAY_MAX_FIRE_US) {
+    delayUs = TRIAC_DELAY_MAX_FIRE_US;
   }
 
   return delayUs;
@@ -352,7 +383,7 @@ void setPowerPermille(uint16_t p) {
 
   if (p == 0U) {
     enable = false;
-    delayUs = HALF_CYCLE_US + 1U;
+    delayUs = TRIAC_DELAY_OFF_US;
     applied = 0U;
   } else {
     if (p > 1000U) {
@@ -372,8 +403,74 @@ void setPowerPermille(uint16_t p) {
   portEXIT_CRITICAL(&timerMux);
 
   if (!enable) {
-    digitalWrite(TRIAC_PIN, LOW);
+    triacGateOff();
   }
+}
+
+static inline uint8_t clampU8(uint8_t value, uint8_t minV, uint8_t maxV) {
+  if (value < minV) return minV;
+  if (value > maxV) return maxV;
+  return value;
+}
+
+void getGestionConfigSnapshot(GestionConfig& cfg) {
+  portENTER_CRITICAL(&stateMux);
+  cfg.Modesaison = Modesaison;
+  cfg.modeSaisonAuto = modeSaisonAuto;
+  cfg.ActiveRouteur = ActiveRouteur;
+  cfg.ConsigneHiverMax = ConsigneHiverMax;
+  cfg.ConsigneHiverP4 = ConsigneHiverP4;
+  cfg.ConsigneHiverP3 = ConsigneHiverP3;
+  cfg.ConsigneHiverP2 = ConsigneHiverP2;
+  cfg.Activemaintien = Activemaintien;
+  cfg.Tmaintien = Tmaintien;
+  cfg.Pmaintien = Pmaintien;
+  portEXIT_CRITICAL(&stateMux);
+}
+
+bool applyGestionConfigFromJson(JsonVariantConst doc) {
+  GestionConfig next;
+  getGestionConfigSnapshot(next);
+
+  next.Modesaison      = doc["modeSaison"]      | next.Modesaison;
+  next.modeSaisonAuto  = doc["modeSaisonAuto"]  | next.modeSaisonAuto;
+  next.ActiveRouteur   = doc["ActiveRouteur"]   | next.ActiveRouteur;
+  next.Activemaintien  = doc["Activemaintien"]  | next.Activemaintien;
+
+  next.ConsigneHiverMax = clampU8((uint8_t)(doc["ConsigneHiverMax"] | next.ConsigneHiverMax), 5U, 75U);
+  next.ConsigneHiverP4  = clampU8((uint8_t)(doc["ConsigneHiverP4"]  | next.ConsigneHiverP4), 5U, 75U);
+  next.ConsigneHiverP3  = clampU8((uint8_t)(doc["ConsigneHiverP3"]  | next.ConsigneHiverP3), 5U, 75U);
+  next.ConsigneHiverP2  = clampU8((uint8_t)(doc["ConsigneHiverP2"]  | next.ConsigneHiverP2), 5U, 75U);
+
+  if (next.ConsigneHiverP2 > next.ConsigneHiverP3) {
+    next.ConsigneHiverP3 = next.ConsigneHiverP2;
+  }
+  if (next.ConsigneHiverP3 > next.ConsigneHiverP4) {
+    next.ConsigneHiverP4 = next.ConsigneHiverP3;
+  }
+  if (next.ConsigneHiverP4 > next.ConsigneHiverMax) {
+    next.ConsigneHiverMax = next.ConsigneHiverP4;
+  }
+
+  next.Tmaintien = clampU8((uint8_t)(doc["Tmaintien"] | next.Tmaintien), 5U, 75U);
+  next.Pmaintien = clampU8((uint8_t)(doc["Pmaintien"] | next.Pmaintien), 0U, 100U);
+
+  bool shouldReconnect = false;
+  portENTER_CRITICAL(&stateMux);
+  shouldReconnect = (!ActiveRouteur && next.ActiveRouteur);
+  Modesaison = next.Modesaison;
+  modeSaisonAuto = next.modeSaisonAuto;
+  ActiveRouteur = next.ActiveRouteur;
+  ConsigneHiverMax = next.ConsigneHiverMax;
+  ConsigneHiverP4 = next.ConsigneHiverP4;
+  ConsigneHiverP3 = next.ConsigneHiverP3;
+  ConsigneHiverP2 = next.ConsigneHiverP2;
+  Activemaintien = next.Activemaintien;
+  Tmaintien = next.Tmaintien;
+  Pmaintien = next.Pmaintien;
+  portEXIT_CRITICAL(&stateMux);
+
+  return shouldReconnect;
 }
 
 uint16_t getRequestedPowerPermille() {
@@ -409,9 +506,13 @@ uint32_t getTriggerDelayUs() {
  void tempoConnectTemp();
  void notifyRouteur(int type);
  void LectureTime();
+ bool applyGestionConfigFromJson(JsonVariantConst doc);
+ void getGestionConfigSnapshot(GestionConfig& cfg);
 
 void taskTempo(void *pv) {
 bool doTempo = true;  // true = tempo, false = connectRouteur
+  TickType_t lastWake = xTaskGetTickCount();
+  const TickType_t period = pdMS_TO_TICKS(30000);
   for (;;) {
 	  
     if (doTempo) {
@@ -427,18 +528,20 @@ bool doTempo = true;  // true = tempo, false = connectRouteur
     // alterne pour la prochaine fois
     doTempo = !doTempo;
 	
-    vTaskDelay(pdMS_TO_TICKS(30000));
+    vTaskDelayUntil(&lastWake, period);
     }
   }
 
 
 void taskNRJ(void *pv) {
+  TickType_t lastWake = xTaskGetTickCount();
+  const TickType_t period = pdMS_TO_TICKS(2000);
   for (;;) {
    if (WSrouteurIsConnected && ActiveRouteur) {
       notifyRouteur(0);
     }
     Notify();
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelayUntil(&lastWake, period);
   }
 }
 
@@ -496,9 +599,16 @@ void loop() {
 // Récupération et transformation des variable en global des task
   static uint32_t lastTempover = 0;
 
-  if (shared.Tempo.version != lastTempover) {
-    tempAbiant = shared.Tempo.temp; //
-    lastTempover = shared.Tempo.version;
+  uint32_t tempoVersion;
+  float tempoTemp;
+  portENTER_CRITICAL(&stateMux);
+  tempoVersion = shared.Tempo.version;
+  tempoTemp = shared.Tempo.temp;
+  portEXIT_CRITICAL(&stateMux);
+
+  if (tempoVersion != lastTempover) {
+    tempAbiant = tempoTemp;
+    lastTempover = tempoVersion;
   }
 
   if (lastTempValid) tempSonde = lastTempC;
