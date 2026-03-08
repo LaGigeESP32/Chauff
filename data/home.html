@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+  <html lang='fr'>
+  <head>
+  <link rel="icon" href="favico.png" sizes="32x32" type="image/png">
+  <title>Radiateur Séjour</title>
+  <meta name='viewport' content='width=device-width, initial-scale=1' charset='UTF-8'/>
+    <link rel="stylesheet" href="https://www.w3schools.com/w3css/5/w3.css" onerror="loadLocalStyle('styles/w3.css')">
+    <script>
+
+        function loadLocalStyle(src) {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = src;
+            link.onload = function() {
+                console.log(`Style local ${src} chargé avec succès.`);
+            };
+            link.onerror = function() {
+                console.log(`Échec du chargement du style local ${src}.`);
+            };
+            document.head.appendChild(link);
+        }
+
+    </script>
+
+  </head>
+  <body>
+  <style>
+  
+  
+.container {
+	position: fixed;
+	width: 100%;
+	min-width : 380px;
+	top : 0px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	font-size : 14px;
+	overflow-y: auto; /* Ajouter une barre de défilement verticale si nécessaire */
+	max-height: 100vh; /* Limiter la hauteur du conteneur à la hauteur de la fenêtre */	
+	margin: 0; /* Éliminer les marges */
+	padding: 0; /* Éliminer les padding */
+}
+
+
+.row {
+	display: flex;
+	justify-content: center;
+	position: center;
+	height : 80vw;
+	min-height : 200px;
+	width: 90vw;
+}
+
+.item {
+	width: 15vw;
+	min-width : 30px;
+	margin-bottom: 15%;
+	text-align: center;
+	
+}
+
+.itemhaut {
+	width: 50vw;
+	min-width : 10px;
+	text-align: center;
+	justify-content: center;
+}
+
+
+ .iconmaxi {
+	 width: 30vw;
+	 max-width: 250px;
+	 height: auto;
+ }
+
+ .icon, .icondis {
+	 width: 15vw;
+	 max-width: 75px;
+	 height: auto;
+ }
+
+.icondis {
+	position: relative;
+	opacity: 0.1;
+}
+ 
+svg {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+}
+		
+.line {
+	stroke-width: 4;
+	stroke-linecap : round;
+	animation: flowAnimation linear infinite;
+}
+
+.line-blue {
+	stroke: #0000ff;
+}
+
+.line-green {
+	stroke: #5dd55d;
+}
+
+@keyframes flowAnimation {
+	0% { stroke-dasharray: 5, 10; stroke-dashoffset: 0; }
+	100% { stroke-dasharray: 5, 10; stroke-dashoffset: -15; }
+}
+
+.hamburger-menu {
+	z-index: 100;
+	position: fixed;
+	left: 0;
+	top: 0px;
+	cursor: pointer;
+}
+
+.ball {
+    position: relative; /* Pour permettre l’absolutisation des enfants */
+    display: inline-block;
+}
+
+.temp-sonde {
+    position: absolute;
+    left: -25%;  /* Ajuste cette valeur pour positionner les valeurs à gauche de l'image */
+    transform: translateY(-50%);
+    color: black;  /* Ajuste la couleur si nécessaire */
+	font-size: 10px;
+}
+
+
+	
+#progressBar {
+    position: absolute;
+    top: 10%;
+    right: 0;
+    height: 90%; /* Adapte à la hauteur de l’image */
+    width: 25px; /* Ajuste selon le design */
+    writing-mode: vertical-lr; /* Rend la barre verticale */
+    transform: rotate(180deg); /* Inverse le sens de remplissage */
+}
+
+  #secutemp {
+    font-size: 22px; /* Ajustez la taille selon vos besoins */
+    color: red; /* Définit la couleur rouge */
+    font-weight: bold; /* Rend le texte plus gras */
+    display: flex;
+    justify-content: center; /* Centre horizontalement */
+    align-items: center; /* Centre verticalement */
+    height: 10vh; /* Prend toute la hauteur de l'écran */
+  }
+
+#connectionStatus {
+	position: fixed;
+	top: 0; /* Positionné tout en haut */
+	left: 10vw; /* Aligné à gauche */
+	width: 80%; /* S'étend sur toute la largeur */
+	color: white; /* Couleur du texte */
+	text-align: center; /* Texte centré */
+	padding: 10px; /* Un peu d'espace autour du texte */
+	z-index: 10; /* S'assure que la div reste au-dessus d'autres éléments */
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Ajoute une ombre pour un effet visuel */
+}
+
+.hidden {
+	display: none;
+}
+
+
+    </style>
+</head>
+<body>
+ 
+<div id="connectionStatus">Non connecté au radiateur</div>
+
+<svg id="lines"></svg>
+
+<div class="container" id="myContainer">
+<center><h3>Radiateur Séjour</h3>
+<p><span id='Dateheure'>Pas de date</span></p></center>
+<br><br>
+<span id='secutemp'></span>
+
+	<div class="row">
+		<div class="item" id="panneaux">
+			<p>Solaire<br></p>
+			<br><img src="panneaux.png" alt="Panneaux solaire" class="icondis">
+		</div>
+		
+        <div class="itemhaut" id="ballon">
+			<div class="ball">
+			<span id="tEauHaut" class="temp-sonde" style="top: 25%;">-- °C</span>
+			<br><img src="ballon.png" alt="Réseau ENEDIS" class="iconmaxi">
+			</div>
+			<p><span id='Etat'>Non connecté</span></p>
+        </div>
+
+        <div class="item" id="reseau">
+			<p>Réseau <br></p>
+			<br><img src="reseau.png" alt="Réseau ENEDIS" class="icondis">
+		</div>
+	</div>
+	
+	
+<div class="hamburger-menu w3-dropdown-click">
+    <button onclick="menu()" class="w3-button w3-blue">&#9776;</button>
+    <div id="menu" class="w3-dropdown-content w3-bar-block w3-border hidden">
+      <a href='gestion' class='w3-bar-item w3-button'>Gestion Radiateur</a>
+      <a href='wifi' class="w3-bar-item w3-button">Wifi</a>
+      <a href='update' class='w3-bar-item w3-button'>MaJ OTA</a>
+      <a href='#' class='w3-bar-item w3-button myLink' data-url='redemar'>Redémarrer</a>
+    </div>
+  </div>
+</div>
+ <script>
+  
+ // Web soket
+ 
+	
+	//var gateway = `ws://${window.location.hostname}:80/ws`;
+	var websocket; window.addEventListener('load', onLoad);
+	let timeout;
+
+
+function buildWsUrl() {
+  const wsProto = (window.location.protocol === "https:") ? "wss" : "ws";
+
+  // Si on est derrière nginx, on a un préfixe /espXYZ/ dans l'URL
+  // Exemple: /esp211/  ou /esp211/page.html
+  const m = window.location.pathname.match(/^\/(esp\d{3})(\/|$)/);
+  const prefix = m ? `/${m[1]}` : "";
+
+  const url = `${wsProto}://${window.location.host}${prefix}/ws`;
+  console.log("WS URL =", url, " | pathname =", window.location.pathname);
+  return url;
+}
+
+	function onLoad(event) {
+	initWebSocket();
+	}
+
+	function initWebSocket() {
+	const gateway = buildWsUrl();
+	websocket = new WebSocket(gateway); 
+	websocket.onopen = onOpen; 
+	websocket.onclose = onClose; 
+	websocket.onmessage = onMessage;
+	resetTimeout();
+	}
+
+	function onOpen(event) {
+	console.log('Connection opened');
+	document.getElementById('connectionStatus').style.display = 'none';
+	// Annonce au serveur la page actuelle
+	websocket.send(JSON.stringify({pageWebEnCours: "Home"}));
+	}
+
+	function onClose(event) {
+	console.log('Connection closed');
+	outConnect = false;
+    document.getElementById('connectionStatus').style.display = 'block';
+	document.getElementById('connectionStatus').style.backgroundColor = '#f44336';
+	}
+	
+// Time out pour bandeaux
+	function resetTimeout() {
+		clearTimeout(timeout);
+		// Définissez un nouveau timeout pour surveiller les mises à jour
+		timeout = setTimeout(() => {
+			document.getElementById('connectionStatus').style.display = 'block';
+			document.getElementById('connectionStatus').style.backgroundColor = '#f44336';
+			initWebSocket(); // Tente une reconnexion après expiration du timeout
+			console.log("timeout");
+		}, 10000); // 5 secondes pour dépasser l'intervalle de 5 secondes
+	}
+
+	// reception Web socket
+	function onMessage(event) {
+	
+    var receivedData = JSON.parse(event.data);
+	var etat = ""
+	var enchauffe =""
+	var HPHC = ""
+	
+    resetTimeout();
+    const connectionStatus = document.getElementById('connectionStatus');
+    connectionStatus.style.display = 'none';
+    connectionStatus.style.backgroundColor = '#4CAF50';
+	
+	// Vérifiez si les données sont spécifiquement "Nan:Nan"
+	if (Object.keys(receivedData).length === 1 && receivedData.Nan === 0) {
+    // Ignorer le reste du code
+    return;
+    }
+	
+	
+		document.getElementById('tEauHaut').innerText = receivedData.tEauHaut + " °C";
+		document.getElementById('Dateheure').innerText = receivedData.dateheure;
+	
+	
+		// icone réseau
+		let image2 = document.querySelector('img[src="reseau.png"]');
+
+		// Change la classe de l'image
+		if (image2 && receivedData.HC == 1) {
+			image2.className = "icon"; // Remplace "new-class" par ta nouvelle classe
+		}
+		else {
+				image2.className = "icondis"; // Remplace "new-class" par ta nouvelle classe
+		}
+	
+		// Etat du ballon
+		enchauffe = receivedData.enChauffe;
+	
+		if (enchauffe == 0) etat = "A l'arrêt";
+		if (enchauffe== 1) etat = "En chauffe par solaire à ";
+		if (enchauffe == 2) etat = "En chauffe par heures creuse à ";
+		if (enchauffe == 3) etat = "En chauffe pour anti légionellose";
+		if (enchauffe == 4) etat = "En chauffe pour température minimale";
+		if (enchauffe == 5) etat = "En chauffe pour maintien de température à ";
+		
+		if (enchauffe == 1 || enchauffe == 2 || enchauffe == 5) {
+		etat = etat + receivedData.powerLevel + "%";
+		}
+		document.getElementById('Etat').innerText = etat;
+		
+		// ligne de routage
+		var svg = document.getElementById('lines');
+		svg.innerHTML = ''; // Supprimer toutes les anciennes lignes
+		
+		if (enchauffe == 1) {
+			ligneRoutage(1,receivedData.powerLevel);
+		}
+		else if (enchauffe > 1) {
+			ligneRoutage(2,receivedData.powerLevel);
+		}
+
+		// icone Solaire
+		let image = document.querySelector('img[src="panneaux.png"]');
+
+		// Change la classe de l'image
+		if (image && receivedData.routeurIsConnected == 1) {
+			image.className = "icon"; // Remplace "new-class" par ta nouvelle classe
+		}
+		else {
+				image.className = "icondis"; // Remplace "new-class" par ta nouvelle classe
+		}
+
+}
+
+
+// Dessin des ligne de routages
+function drawLine(x1, y1, x2, y2, colorClass, duration) {
+    const svg = document.getElementById('lines');
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x1);
+    line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2);
+    line.setAttribute('y2', y2);
+    line.setAttribute('class', `line ${colorClass}`);
+    line.style.animationDuration = duration + 's';
+    svg.appendChild(line);
+    return line;
+}
+
+// Mettre à jour la durée de l'animation des lignes existantes
+function updateLineDuration(lines, duration) {
+    lines.forEach(line => {
+        line.style.animationDuration = duration + 's';
+    });
+}
+
+// Calcul de la vitesse des lignes routage en fonction de la puissance
+function calculateDuration(PW) {
+    const a = (0.1 - 5) / Math.log(100);
+    const b = 5;
+    return a * Math.log(Math.abs(PW)) + b; // Utilise la valeur absolue de PW
+}
+
+// Création des ligne routages
+function connectElements(el1, el2, PW) {
+    const panneaux = document.getElementById('panneaux');
+    var colorClass = 'line-blue';
+
+    const duration = calculateDuration(PW);
+
+    const img1 = el1.querySelector('img');
+    const img2 = el2.querySelector('img');
+
+    const rect1 = img1.getBoundingClientRect();
+    const rect2 = img2.getBoundingClientRect();
+    const x1 = rect1.left + rect1.width / 2 + window.scrollX;
+    const y1 = rect1.top + rect1.height / 2 + window.scrollY;
+    const x2 = rect2.left + rect2.width / 2 + window.scrollX;
+    const y2 = rect2.top + rect2.height / 2 + window.scrollY;
+    const offset = (y2 - y1) / 2;
+
+	if (el1 == panneaux) {
+	colorClass = 'line-green';
+	// Draw horizontal line only for router to house connection
+	drawLine(x1 +30 , y1, x2-25, y1, colorClass, duration);
+    }
+	else {
+	drawLine(x1 -10 , y1, x2+25, y1, colorClass, duration);
+	}
+
+}
+
+// Ligne du routage
+function ligneRoutage(Src, Pw) {
+
+    // éléments de base sans clients
+    const panneaux = document.getElementById('panneaux');
+    const routeur = document.getElementById('ballon');
+    const reseau = document.getElementById('reseau');
+
+	if (Src == 1) connectElements(panneaux, ballon, Pw);
+	if (Src == 2) connectElements(reseau, ballon, Pw);
+	
+}
+
+// Display du menu hamburger
+
+	function menu() {
+	var x = document.getElementById("menu");
+		if (x.className.indexOf("w3-show") == -1) {
+		x.className += " w3-show";
+		} else { 
+		x.className = x.className.replace(" w3-show", "");
+		}
+	}
+
+// Active les liens des clic du menu
+  function initLienClicks() {
+	var x = document.getElementById("menu");
+	document.querySelectorAll(".myLink").forEach(link => {
+	  link.addEventListener("click", function(event) {
+		event.preventDefault();
+		fetch(this.getAttribute("data-url"));
+		x.className = x.className.replace(" w3-show", "");
+		  })
+	  })
+
+	}
+
+initLienClicks();
+	
+    </script>
+
+</body>
+</html>
+
+
