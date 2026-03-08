@@ -153,8 +153,10 @@ void tempoConnectTemp() { // connexion au boîtier tempo pour récupérer la tem
   if (!(t > -40.0f && t < 125.0f)) return;
 
   // 5) Stockage
+  portENTER_CRITICAL(&stateMux);
   shared.Tempo.temp = t;
   shared.Tempo.version++;
+  portEXIT_CRITICAL(&stateMux);
 }
 
 

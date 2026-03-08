@@ -36,9 +36,9 @@ void initWebServeur() {
 
 // Page de redémarrage du controleur
   server.on("/redemar", HTTP_GET, [](AsyncWebServerRequest* request) {
-    String html = "<!DOCTYPE html> <html lang='fr'> <head> <meta charset='UTF-8'><center><h1>Redémarrage du controleur ECS en cours</h1><h2>Vous allez être automatiquement redirigé vers la page d'accueil</h2><div id='circle'></div><style>#circle { width: 50px; height: 50px; border: 3px solid blue; border-radius: 50%; border-top-color: transparent; animation: spin 1s linear infinite; display: inline-block; } @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style></center><script>setTimeout(function(){ window.location = '/'; }, 10000);</script>";
+    static const char html[] PROGMEM = "<!DOCTYPE html> <html lang='fr'> <head> <meta charset='UTF-8'><center><h1>Redémarrage du controleur ECS en cours</h1><h2>Vous allez être automatiquement redirigé vers la page d'accueil</h2><div id='circle'></div><style>#circle { width: 50px; height: 50px; border: 3px solid blue; border-radius: 50%; border-top-color: transparent; animation: spin 1s linear infinite; display: inline-block; } @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style></center><script>setTimeout(function(){ window.location = '/'; }, 10000);</script>";
     request->send(200, "text/html", html);
-    delay(1000);
+    vTaskDelay(pdMS_TO_TICKS(1000));
     ESP.restart();
   });
 

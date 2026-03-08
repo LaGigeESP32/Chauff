@@ -4,9 +4,15 @@
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 void demandeRouteur() {
-	
-  if (besoinRouteur() > 10) { // si supérieur a 1 %
-  setPowerPermille(ordreRouteur);
+
+  if (besoinRouteur() > 0) {
+    int16_t requested = ordreRouteur;
+    if (requested < 0) {
+      requested = 0;
+    } else if (requested > 1000) {
+      requested = 1000;
+    }
+    setPowerPermille((uint16_t)requested);
 	}
   else {
     setPowerPermille(0);
@@ -17,14 +23,16 @@ void demandeRouteur() {
 
 uint8_t besoinRouteur() {
   uint8_t p;
+  GestionConfig cfg;
+  getGestionConfigSnapshot(cfg);
 
 	// Définition du besoin routeur
 
-  if (!Modesaison){
-    if (tempSonde >= ConsigneHiverMax) p = 0;
-    else if (tempSonde >= ConsigneHiverP4) p = 4;
-    else if (tempSonde >= ConsigneHiverP3) p = 3; 
-    else if (tempSonde >= ConsigneHiverP2) p = 2;
+  if (!cfg.Modesaison){
+    if (tempSonde >= cfg.ConsigneHiverMax) p = 0;
+    else if (tempSonde >= cfg.ConsigneHiverP4) p = 4;
+    else if (tempSonde >= cfg.ConsigneHiverP3) p = 3;
+    else if (tempSonde >= cfg.ConsigneHiverP2) p = 2;
     else if (tempSonde >= 0) p = 1;
     else p = 0; // si t -100 alors on stop la demande de routage
   }
@@ -98,13 +106,17 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
       routeurIsConnected = true;
       break;
     case WStype_TEXT: {
+      if (length == 0 || length >= ROUTEUR_RX_BUFFER_SIZE) {
+        return;
+      }
+
       // Reception du message du routeur
-      char message[length + 1];
+      char message[ROUTEUR_RX_BUFFER_SIZE];
       memcpy(message, payload, length);
       message[length] = '\0'; // Ajouter un caractère de fin
 
       // Désérialisation du JSON
-      StaticJsonDocument<512> rec;
+      StaticJsonDocument<256> rec;
       DeserializationError err = deserializeJson(rec, message);
       if (err) {
         return;
@@ -112,7 +124,13 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 
       if (rec.containsKey("Routeur")) {
         float chauffage = rec["Chauffage"] | 0.0f;
-        ordreRouteur = (int16_t)roundf(chauffage * 10.0f);
+        int16_t nextOrdre = (int16_t)roundf(chauffage * 10.0f);
+        if (nextOrdre < 0) {
+          nextOrdre = 0;
+        } else if (nextOrdre > 1000) {
+          nextOrdre = 1000;
+        }
+        ordreRouteur = nextOrdre;
         if (enChauffe <= 1) demandeRouteur();
       }
       break;
